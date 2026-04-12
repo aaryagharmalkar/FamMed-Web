@@ -15,8 +15,9 @@ export const getMedicines = async (familyId, filters = {}) => {
     let query = supabase
       .from('medicines')
       .select('*, reminders(id, scheduled_time, is_active), profiles:assigned_to(full_name, avatar_url)')
-      .eq('family_id', familyId)
       .order('created_at', { ascending: false });
+
+    if (familyId) query = query.eq('family_id', familyId);
 
     if (filters.search) query = query.ilike('name', `%${filters.search}%`);
     if (filters.form) query = query.eq('form', filters.form);
@@ -47,11 +48,7 @@ export const getMedicineById = async (id) => {
 
 export const addMedicine = async (medicineData) => {
   try {
-    const { data, error } = await withTimeout(
-      supabase.from('medicines').insert(medicineData).select('*').single(),
-      12000,
-      'Save medicine timed out. Check Supabase connection and try again.'
-    );
+    const { data, error } = await supabase.from('medicines').insert(medicineData).select('*').single();
     if (error) throw error;
     return handleServiceSuccess(data);
   } catch (error) {
@@ -109,11 +106,14 @@ export const uploadPrescription = async (medicineId, file) => {
 
 export const getLowStockMedicines = async (familyId) => {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('medicines')
       .select('*')
-      .eq('family_id', familyId)
       .filter('stock_count', 'lte', 'low_stock_threshold');
+      
+    if (familyId) query = query.eq('family_id', familyId);
+    
+    const { data, error } = await query;
     if (error) throw error;
     return handleServiceSuccess(data || []);
   } catch (error) {

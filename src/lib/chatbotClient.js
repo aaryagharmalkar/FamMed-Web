@@ -1,82 +1,68 @@
-import axios from 'axios';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const CHATBOT_BASE_URL = import.meta.env.VITE_CHATBOT_API_URL;
-const CHATBOT_API_KEY = import.meta.env.VITE_CHATBOT_API_KEY;
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
-const SYSTEM_PROMPT = `You are FamMed's AI health assistant. You help families understand medicines, dosage schedules, potential side effects, drug interactions, and general wellness. Always recommend consulting a doctor for medical decisions. Keep responses concise, friendly, and evidence-based.`;
+let genAI = null;
+if (API_KEY) {
+  genAI = new GoogleGenerativeAI(API_KEY);
+}
 
-const chatbotClient = axios.create({
-  baseURL: CHATBOT_BASE_URL,
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+const SYSTEM_PROMPT = `You are FamMed's AI health assistant. You help families understand medicines, dosage schedules, potential side effects, drug interactions, and general wellness.
+Always recommend consulting a doctor for medical decisions. Keep responses concise, friendly, and evidence-based.
 
-chatbotClient.interceptors.request.use(
-  (config) => {
-    if (CHATBOT_API_KEY) {
-      config.headers.Authorization = `Bearer ${CHATBOT_API_KEY}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
-
-chatbotClient.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    const message = error?.response?.data?.error || error?.message || 'Failed to communicate with AI assistant.';
-    return Promise.reject(new Error(message));
-  }
-);
-
-const sanitizeMessage = (message = '') =>
-  String(message)
-    .replace(/<[^>]*>/g, '')
-    .trim()
-    .slice(0, 2000);
+You have access to the user's data (medicines, reminders, and health records) provided in the context. Use this context to personalize your answers.
+If the user asks about their medicines, reminders, or uploaded health records, answer using the provided context.
+`;
 
 export const sendMessage = async (messages, context = {}) => {
-  const safeMessages = Array.isArray(messages)
-    ? messages.map((m) => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: sanitizeMessage(m.content),
-      }))
-    : [];
+  if (!genAI) {
+    return { data: null, error: new Error('Gemini API key is missing. Please set VITE_GEMINI_API_KEY in .env.local') };
+  }
+
+  // Format the context
+  let contextString = "User Context:\n";
+  if (context.activeMedicines && context.activeMedicines.length > 0) {
+    contextString += `- Active Medicines: ${JSON.stringify(context.activeMedicines)}\n`;
+  }
+  if (context.reminders && context.reminders.length > 0) {
+    contextString += `- Scheduled Reminders: ${JSON.stringify(context.reminders)}\n`;
+  }
+  if (context.healthRecords && context.healthRecords.length > 0) {
+    contextString += `- Uploaded Health Records (Metadata): ${JSON.stringify(context.healthRecords)}\n`;
+  }
 
   try {
-    const { data } = await chatbotClient.post('/', {
-      model: 'mistral-medium',
-      messages: [
-        {
-          role: 'system',
-          content: SYSTEM_PROMPT,
-        },
-        ...(context?.activeMedicines?.length
-          ? [
-              {
-                role: 'system',
-                content: `Active medicines context (names only): ${context.activeMedicines.join(', ')}`,
-              },
-            ]
-          : []),
-        ...safeMessages,
-      ],
-      temperature: 0.4,
-      max_tokens: 500,
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction: SYSTEM_PROMPT + '\n\n' + contextString,
     });
 
-    const reply =
-      data?.choices?.[0]?.message?.content ||
-      data?.reply ||
-      data?.message ||
-      'I could not generate a response right now. Please try again.';
+    // Format history for GoogleGenerativeAI
+    const safeHistory = Array.isArray(messages) ? [...messages] : [];
+    const lastMessage = safeHistory.pop();
 
-    return { data: reply, error: null };
+    if (!lastMessage) {
+      return { data: null, error: new Error("No message content provided") };
+    }
+
+    const history = safeHistory.map((m) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content || '' }],
+    }));
+
+    const chat = model.startChat({
+      history,
+      generationConfig: {
+        temperature: 0.4,
+      },
+    });
+
+    const result = await chat.sendMessage(lastMessage.content);
+    const responseText = result.response.text();
+
+    return { data: responseText || "I couldn't generate a response. Please try again.", error: null };
   } catch (error) {
+    console.error("Gemini API Error:", error);
     return { data: null, error };
   }
 };
-
-export default chatbotClient;

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Navbar from './Navbar';
 import Sidebar from './Sidebar';
+import ChatbotSidebar from '../chatbot/ChatbotSidebar';
 
 const MainLayout = () => {
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
@@ -17,6 +18,7 @@ const MainLayout = () => {
           <Outlet />
         </main>
       </div>
+      <ChatbotSidebar />
     </div>
   );
 };

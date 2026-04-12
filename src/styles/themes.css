@@ -1,0 +1,9 @@
+:root {
+	--radius-card: 8px;
+	--radius-input: 6px;
+	--radius-badge: 4px;
+}
+
+.dark {
+	color-scheme: dark;
+}

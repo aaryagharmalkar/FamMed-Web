@@ -42,8 +42,12 @@ const Medicines = () => {
 				: [],
 		};
 
-		await addMedicineMutation.mutateAsync(payload);
-		setIsAddOpen(false);
+		try {
+			await addMedicineMutation.mutateAsync(payload);
+			setIsAddOpen(false);
+		} catch (error) {
+			toast.error(error.message || 'Failed to save medicine');
+		}
 	};
 
 	return (
@@ -91,9 +95,14 @@ const Medicines = () => {
 			{isAddOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
 					<div className="w-full max-w-3xl">
-						<AddMedicineForm onSubmit={handleAddMedicine} members={members} />
+						<AddMedicineForm
+							onSubmit={handleAddMedicine}
+							onValidationError={() => toast.error('Please complete all required medicine fields.')}
+							isSubmitting={addMedicineMutation.isPending}
+							members={members}
+						/>
 						<div className="mt-2 text-right">
-							<button type="button" className="rounded border bg-white px-3 py-1.5 text-sm dark:bg-slate-800" onClick={() => setIsAddOpen(false)}>
+							<button type="button" disabled={addMedicineMutation.isPending} className="rounded border bg-white px-3 py-1.5 text-sm disabled:opacity-60 dark:bg-slate-800" onClick={() => setIsAddOpen(false)}>
 								Cancel
 							</button>
 						</div>

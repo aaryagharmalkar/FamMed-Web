@@ -2,6 +2,14 @@ import { supabase } from '../lib/supabaseClient';
 import { uploadFile, getSignedUrl } from './storageService';
 import { handleServiceError, handleServiceSuccess } from './serviceHelpers';
 
+const withTimeout = (promise, timeoutMs = 10000) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Request timed out')), timeoutMs);
+    }),
+  ]);
+
 export const signUp = async (email, password, fullName) => {
   try {
     const { data, error } = await supabase.auth.signUp({
@@ -45,7 +53,7 @@ export const signInWithGoogle = async () => {
 
 export const signOut = async () => {
   try {
-    const { error } = await supabase.auth.signOut();
+    const { error } = await withTimeout(supabase.auth.signOut({ scope: 'local' }));
     if (error) throw error;
     return handleServiceSuccess(true);
   } catch (error) {

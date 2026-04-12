@@ -11,6 +11,14 @@ import {
   updateMemberRole,
 } from '../services/familyService';
 
+const withTimeout = (promise, ms = 15000, message = 'Request timed out') =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]);
+
 export const useFamily = (familyId) =>
   useQuery({
     queryKey: ['family', familyId],
@@ -48,7 +56,11 @@ export const useCreateFamily = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (name) => {
-      const { data, error } = await createFamily(name);
+      const { data, error } = await withTimeout(
+        createFamily(name),
+        15000,
+        'Create family request timed out. Check Supabase and try again.'
+      );
       if (error) throw error;
       return data;
     },
@@ -66,7 +78,11 @@ export const useJoinFamily = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (inviteCode) => {
-      const { data, error } = await joinFamily(inviteCode);
+      const { data, error } = await withTimeout(
+        joinFamily(inviteCode),
+        15000,
+        'Join family request timed out. Check Supabase and try again.'
+      );
       if (error) throw error;
       return data;
     },

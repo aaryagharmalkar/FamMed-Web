@@ -37,8 +37,12 @@ const Family = () => {
 			return;
 		}
 
-		await createFamily.mutateAsync(name);
-		setFamilyName('');
+		try {
+			await createFamily.mutateAsync(name);
+			setFamilyName('');
+		} catch (error) {
+			toast.error(error.message || 'Failed to create family');
+		}
 	};
 
 	const handleJoinFamily = async () => {
@@ -48,8 +52,12 @@ const Family = () => {
 			return;
 		}
 
-		await joinFamily.mutateAsync(code);
-		setInvite('');
+		try {
+			await joinFamily.mutateAsync(code);
+			setInvite('');
+		} catch (error) {
+			toast.error(error.message || 'Failed to join family');
+		}
 	};
 
 	return (

@@ -1,26 +1,71 @@
 import { supabase } from '../lib/supabaseClient';
 import { handleServiceError, handleServiceSuccess } from './serviceHelpers';
 
+const withTimeout = (promise, timeoutMs = 12000, message = 'Request timed out') =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]);
+
+const callRpc = async (fnName, payload, timeoutMs = 12000) => {
+  const {
+    data: { session },
+    error: sessionError,
+  } = await withTimeout(supabase.auth.getSession(), timeoutMs, 'Unable to access auth session');
+
+  if (sessionError) throw sessionError;
+  if (!session?.access_token) throw new Error('Please sign in again.');
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) throw new Error('Supabase environment variables are missing.');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${supabaseUrl}/rest/v1/rpc/${fnName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const raw = await response.text();
+    const parsed = raw ? JSON.parse(raw) : null;
+
+    if (!response.ok) {
+      const message = parsed?.message || parsed?.error || `RPC ${fnName} failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    return parsed;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export const createFamily = async (name) => {
   try {
     if (!name || !String(name).trim()) {
       throw new Error('Family name is required');
     }
 
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-    if (userError) throw userError;
-    if (!user?.id) throw new Error('Not authenticated');
-
-    const { data, error } = await supabase.rpc('create_family_with_admin_member', {
+    const data = await callRpc('create_family_with_admin_member', {
       family_name: String(name).trim(),
     });
-    if (error) throw error;
 
     return handleServiceSuccess(data);
   } catch (error) {
+    if (error?.name === 'AbortError') {
+      return handleServiceError(new Error('Create family timed out. Check internet/Supabase and try again.'));
+    }
     return handleServiceError(error);
   }
 };
@@ -31,20 +76,15 @@ export const joinFamily = async (inviteCode) => {
       throw new Error('Invite code is required');
     }
 
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-    if (userError) throw userError;
-    if (!user?.id) throw new Error('Not authenticated');
-
-    const { data, error } = await supabase.rpc('join_family_with_invite', {
+    const data = await callRpc('join_family_with_invite', {
       input_invite_code: String(inviteCode).trim(),
     });
-    if (error) throw error;
 
     return handleServiceSuccess(data);
   } catch (error) {
+    if (error?.name === 'AbortError') {
+      return handleServiceError(new Error('Join family timed out. Check internet/Supabase and try again.'));
+    }
     return handleServiceError(error);
   }
 };

@@ -2,6 +2,14 @@ import { supabase } from '../lib/supabaseClient';
 import { uploadFile, getSignedUrl } from './storageService';
 import { handleServiceError, handleServiceSuccess } from './serviceHelpers';
 
+const withTimeout = (promise, timeoutMs = 12000, message = 'Request timed out') =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]);
+
 export const getMedicines = async (familyId, filters = {}) => {
   try {
     let query = supabase
@@ -39,7 +47,11 @@ export const getMedicineById = async (id) => {
 
 export const addMedicine = async (medicineData) => {
   try {
-    const { data, error } = await supabase.from('medicines').insert(medicineData).select('*').single();
+    const { data, error } = await withTimeout(
+      supabase.from('medicines').insert(medicineData).select('*').single(),
+      12000,
+      'Save medicine timed out. Check Supabase connection and try again.'
+    );
     if (error) throw error;
     return handleServiceSuccess(data);
   } catch (error) {

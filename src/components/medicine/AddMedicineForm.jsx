@@ -14,11 +14,12 @@ const schema = z.object({
 	end_date: z.string().optional(),
 	instructions: z.string().optional(),
 	stock_count: z.coerce.number().int().min(0),
+	assigned_to: z.string().optional(),
 	interactions: z.string().optional(),
 	side_effects: z.string().optional(),
 });
 
-const AddMedicineForm = ({ onSubmit, members = [] }) => {
+const AddMedicineForm = ({ onSubmit, onValidationError, isSubmitting = false, members = [] }) => {
 	const [step, setStep] = useState(1);
 	const {
 		register,
@@ -32,7 +33,7 @@ const AddMedicineForm = ({ onSubmit, members = [] }) => {
 	const stepTitle = useMemo(() => ({ 1: 'Basic Info', 2: 'Schedule', 3: 'Additional' }[step]), [step]);
 
 	return (
-		<form onSubmit={handleSubmit(onSubmit)} className="space-y-4 rounded-lg border bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+		<form onSubmit={handleSubmit(onSubmit, onValidationError)} className="space-y-4 rounded-lg border bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
 			<h3 className="text-lg font-semibold">Add Medicine - {stepTitle}</h3>
 
 			{step === 1 && (
@@ -65,11 +66,11 @@ const AddMedicineForm = ({ onSubmit, members = [] }) => {
 			{Object.values(errors).length > 0 && <p className="text-xs text-danger-600">Please correct highlighted fields.</p>}
 
 			<div className="flex justify-between">
-				<button type="button" className="rounded border px-3 py-1.5" onClick={() => setStep((s) => Math.max(1, s - 1))}>Back</button>
+				<button type="button" disabled={isSubmitting} className="rounded border px-3 py-1.5 disabled:opacity-60" onClick={() => setStep((s) => Math.max(1, s - 1))}>Back</button>
 				{step < 3 ? (
-					<button type="button" className="rounded bg-primary-600 px-3 py-1.5 text-white" onClick={() => setStep((s) => Math.min(3, s + 1))}>Next</button>
+					<button type="button" disabled={isSubmitting} className="rounded bg-primary-600 px-3 py-1.5 text-white disabled:opacity-60" onClick={() => setStep((s) => Math.min(3, s + 1))}>Next</button>
 				) : (
-					<button type="submit" className="rounded bg-primary-600 px-3 py-1.5 text-white">Save medicine</button>
+					<button type="submit" disabled={isSubmitting} className="rounded bg-primary-600 px-3 py-1.5 text-white disabled:opacity-60">{isSubmitting ? 'Saving...' : 'Save medicine'}</button>
 				)}
 			</div>
 		</form>

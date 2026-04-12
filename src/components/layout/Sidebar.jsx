@@ -65,7 +65,9 @@ const Sidebar = ({ expanded, onToggle }) => {
 				<button
 					type="button"
 					className="mt-1 w-full rounded-md px-2 py-2 text-left text-sm text-danger-600 hover:bg-danger-50 dark:text-danger-400 dark:hover:bg-danger-900/20"
-					onClick={signOut}
+					onClick={async () => {
+						await signOut();
+					}}
 				>
 					{expanded ? 'Sign out' : 'Out'}
 				</button>

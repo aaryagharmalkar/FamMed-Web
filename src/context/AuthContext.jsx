@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from 'react';
+import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { signOut as signOutService } from '../services/authService';
@@ -14,8 +15,19 @@ export const AuthProvider = ({ children }) => {
   const familyId = memberships?.[0]?.family_id || memberships?.[0]?.families?.id || null;
 
   const signOut = async () => {
-    await signOutService();
-    navigate('/login');
+    const { error } = await signOutService();
+    if (error) {
+      toast.error(error.message || 'Sign out timed out, redirecting to login.');
+    } else {
+      toast.success('Signed out');
+    }
+
+    navigate('/login', { replace: true });
+    window.setTimeout(() => {
+      if (window.location.pathname !== '/login') {
+        window.location.assign('/login');
+      }
+    }, 100);
   };
 
   const value = useMemo(

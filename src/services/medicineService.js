@@ -10,6 +10,53 @@ const withTimeout = (promise, timeoutMs = 12000, message = 'Request timed out') 
     }),
   ]);
 
+const insertMedicineViaRest = async (medicineData, timeoutMs = 12000) => {
+  const {
+    data: { session },
+    error: sessionError,
+  } = await withTimeout(supabase.auth.getSession(), timeoutMs, 'Unable to access auth session');
+
+  if (sessionError) throw sessionError;
+  if (!session?.access_token) throw new Error('Please sign in again.');
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) throw new Error('Supabase environment variables are missing.');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${supabaseUrl}/rest/v1/medicines`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${session.access_token}`,
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify(medicineData),
+      signal: controller.signal,
+    });
+
+    const raw = await response.text();
+    const parsed = raw ? JSON.parse(raw) : null;
+
+    if (!response.ok) {
+      const message = parsed?.message || parsed?.error || `Save medicine failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    if (!Array.isArray(parsed) || !parsed[0]) {
+      throw new Error('Medicine saved but no row was returned.');
+    }
+
+    return parsed[0];
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export const getMedicines = async (familyId, filters = {}) => {
   try {
     let query = supabase
@@ -47,14 +94,12 @@ export const getMedicineById = async (id) => {
 
 export const addMedicine = async (medicineData) => {
   try {
-    const { data, error } = await withTimeout(
-      supabase.from('medicines').insert(medicineData).select('*').single(),
-      12000,
-      'Save medicine timed out. Check Supabase connection and try again.'
-    );
-    if (error) throw error;
+    const data = await insertMedicineViaRest(medicineData, 12000);
     return handleServiceSuccess(data);
   } catch (error) {
+    if (error?.name === 'AbortError') {
+      return handleServiceError(new Error('Save medicine timed out. Check Supabase connection and try again.'));
+    }
     return handleServiceError(error);
   }
 };

@@ -56,11 +56,7 @@ export const useCreateFamily = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (name) => {
-      const { data, error } = await withTimeout(
-        createFamily(name),
-        15000,
-        'Create family request timed out. Check Supabase and try again.'
-      );
+      const { data, error } = await createFamily(name);
       if (error) throw error;
       return data;
     },
@@ -78,11 +74,7 @@ export const useJoinFamily = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (inviteCode) => {
-      const { data, error } = await withTimeout(
-        joinFamily(inviteCode),
-        15000,
-        'Join family request timed out. Check Supabase and try again.'
-      );
+      const { data, error } = await joinFamily(inviteCode);
       if (error) throw error;
       return data;
     },

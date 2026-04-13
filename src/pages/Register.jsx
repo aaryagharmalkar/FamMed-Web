@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
-import { signUp } from '../services/authService';
+import { signUp, signInWithGoogle } from '../services/authService';
 
 const schema = z
 	.object({
@@ -30,11 +30,18 @@ const Register = () => {
 
 	const onSubmit = async (values) => {
 		setLoading(true);
-		const { error } = await signUp(values.email, values.password, values.fullName);
-		if (error) toast.error(error.message || 'Registration failed');
-		else {
-			toast.success('Account created');
-			navigate('/');
+		const { data, error } = await signUp(values.email, values.password, values.fullName);
+		if (error) {
+			toast.error(error.message || 'Registration failed');
+		} else {
+			// Supabase creates the user but leaves session null if 'Confirm Email' is enabled
+			if (data?.user && !data?.session) {
+				toast.success('Account created! Please check your email to verify your account before logging in.', { duration: 6000 });
+				navigate('/login');
+			} else {
+				toast.success('Account created successfully');
+				navigate('/');
+			}
 		}
 		setLoading(false);
 	};
@@ -51,8 +58,11 @@ const Register = () => {
 				{errors.password && <p className="text-xs text-danger-600">{errors.password.message}</p>}
 				<input {...register('confirmPassword')} placeholder="Confirm password" type="password" className="w-full rounded border p-2 dark:border-slate-600 dark:bg-slate-900" />
 				{errors.confirmPassword && <p className="text-xs text-danger-600">{errors.confirmPassword.message}</p>}
-				<button disabled={loading} className="w-full rounded bg-primary-600 px-4 py-2 text-white" type="submit">
+				<button disabled={loading} className="w-full rounded bg-primary-600 px-4 py-2 text-white disabled:opacity-60" type="submit">
 					{loading ? 'Creating account...' : 'Create account'}
+				</button>
+				<button type="button" className="w-full rounded border px-4 py-2" onClick={signInWithGoogle}>
+					Continue with Google
 				</button>
 				<p className="text-center text-sm">
 					Already have an account? <Link to="/login" className="text-primary-600">Sign in</Link>

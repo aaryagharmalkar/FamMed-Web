@@ -15,7 +15,7 @@ const ProtectedRoute = ({ children }) => {
 	if (authError && !isAuthenticated) {
 		return (
 			<div className="mx-auto mt-10 max-w-md rounded-lg border border-danger-300 bg-danger-50 p-4 text-sm text-danger-700 dark:border-danger-700 dark:bg-danger-900/20 dark:text-danger-200">
-				Authentication failed. Check Supabase connection and refresh.
+				Authentication failed: {authError?.message || 'Check Supabase connection and refresh.'}
 			</div>
 		);
 	}

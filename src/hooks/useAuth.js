@@ -70,13 +70,9 @@ export const useAuth = () => {
           setUser(null);
           setProfile(null);
           setAuthError(error);
-          console.error("fetchAuth Error:", error);
         }
       } finally {
-        if (mounted) {
-          setIsLoading(false);
-          clearTimeout(timeout);
-        }
+        if (mounted) setIsLoading(false);
       }
     };
 

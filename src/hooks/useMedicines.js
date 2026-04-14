@@ -17,6 +17,7 @@ export const useMedicines = (familyId, filters = {}) =>
       if (error) throw error;
       return data;
     },
+    enabled: Boolean(familyId),
   });
 
 export const useMedicine = (id) =>
@@ -101,5 +102,6 @@ export const useLowStockAlert = (familyId) =>
       if (error) throw error;
       return data;
     },
+    enabled: Boolean(familyId),
     refetchInterval: 60 * 1000,
   });

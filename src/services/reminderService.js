@@ -4,14 +4,11 @@ import { handleServiceError, handleServiceSuccess } from './serviceHelpers';
 
 export const getReminders = async (familyId) => {
   try {
-    let query = supabase
+    const { data, error } = await supabase
       .from('reminders')
       .select('*, medicines(name, dosage), profiles:assigned_to(full_name, avatar_url)')
+      .eq('family_id', familyId)
       .order('scheduled_time', { ascending: true });
-      
-    if (familyId) query = query.eq('family_id', familyId);
-    
-    const { data, error } = await query;
     if (error) throw error;
     return handleServiceSuccess(data || []);
   } catch (error) {

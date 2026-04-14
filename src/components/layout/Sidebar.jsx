@@ -19,6 +19,7 @@ const navItems = [
 	{ to: '/reminders', label: 'Reminders', icon: Bell },
 	{ to: '/family', label: 'Family', icon: Users },
 	{ to: '/health-records', label: 'Health Records', icon: HeartPulse },
+	{ to: '/chatbot', label: 'Chatbot', icon: Bot },
 	{ to: '/profile', label: 'Profile', icon: UserCircle },
 ];
 

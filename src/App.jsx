@@ -38,6 +38,7 @@ const App = () => (
       <Route path="reminders" element={<Reminders />} />
       <Route path="family" element={<Family />} />
       <Route path="health-records" element={<HealthRecords />} />
+      <Route path="chatbot" element={<Chatbot />} />
       <Route path="profile" element={<Profile />} />
       <Route path="notifications" element={<Notifications />} />
       <Route

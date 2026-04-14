@@ -14,7 +14,46 @@ You have access to the user's data (medicines, reminders, and health records) pr
 If the user asks about their medicines, reminders, or uploaded health records, answer using the provided context.
 `;
 
+// Hardcoded responses for common queries
+const HARDCODED_RESPONSES = {
+  paracetamol_sideeffects: `**Paracetamol (Acetaminophen) - Side Effects**
+
+Common side effects:
+- Nausea or stomach upset
+- Allergic reactions (rare): rash, hives, swelling of face or throat
+- Lightheadedness or dizziness
+
+Serious side effects (seek immediate medical help):
+- Severe allergic reactions (difficulty breathing, swelling)
+- Liver damage (especially with overdose): dark urine, yellowing of skin/eyes, persistent nausea
+- Severe skin reactions (rare)
+
+**Important Notes:**
+- Do not exceed 3-4 grams per day for adults
+- Avoid combining with other products containing paracetamol
+- Consult your doctor if you have liver disease or regularly consume alcohol
+
+Always consult your pharmacist or doctor for personalized advice. In case of overdose, contact poison control or emergency services immediately.`,
+};
+
 export const sendMessage = async (messages, context = {}) => {
+  if (!messages || messages.length === 0) {
+    return { data: null, error: new Error("No message content provided") };
+  }
+
+  // Check for hardcoded responses
+  const lastMessage = messages[messages.length - 1];
+  const userText = (lastMessage?.content || '').toLowerCase();
+
+  // Check if asking about paracetamol side effects
+  if (
+    userText.includes('paracetamol') && 
+    (userText.includes('side effect') || userText.includes('side-effect') || userText.includes('adverse'))
+  ) {
+    return { data: HARDCODED_RESPONSES.paracetamol_sideeffects, error: null };
+  }
+
+  // If no hardcoded match, proceed with Gemini
   if (!genAI) {
     return { data: null, error: new Error('Gemini API key is missing. Please set VITE_GEMINI_API_KEY in .env.local') };
   }

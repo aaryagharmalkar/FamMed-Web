@@ -9,10 +9,46 @@ const withTimeout = (promise, timeoutMs = 12000, message = 'Request timed out') 
     }),
   ]);
 
-const callRpc = async (fnName, payload) => {
-  const { data, error } = await supabase.rpc(fnName, payload);
-  if (error) throw error;
-  return data;
+const callRpc = async (fnName, payload, timeoutMs = 12000) => {
+  const {
+    data: { session },
+    error: sessionError,
+  } = await withTimeout(supabase.auth.getSession(), timeoutMs, 'Unable to access auth session');
+
+  if (sessionError) throw sessionError;
+  if (!session?.access_token) throw new Error('Please sign in again.');
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) throw new Error('Supabase environment variables are missing.');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${supabaseUrl}/rest/v1/rpc/${fnName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const raw = await response.text();
+    const parsed = raw ? JSON.parse(raw) : null;
+
+    if (!response.ok) {
+      const message = parsed?.message || parsed?.error || `RPC ${fnName} failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    return parsed;
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 export const createFamily = async (name) => {

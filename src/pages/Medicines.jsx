@@ -25,9 +25,14 @@ const Medicines = () => {
 	};
 
 	const handleAddMedicine = async (values) => {
+		if (!familyId) {
+			toast.error('Join or create a family before adding medicines.');
+			return;
+		}
+
 		const payload = {
 			...values,
-			family_id: familyId || null,
+			family_id: familyId,
 			created_by: user?.id,
 			side_effects: values.side_effects
 				? values.side_effects.split(',').map((item) => item.trim()).filter(Boolean)
@@ -50,10 +55,6 @@ const Medicines = () => {
 			<div className="flex flex-wrap items-center justify-between gap-2">
 				<h1 className="text-2xl font-semibold">Medicines</h1>
 				<div className="flex items-center gap-2">
-					<button type="button" onClick={() => setIsAddOpen(true)} className="flex items-center gap-1 rounded bg-primary-600 px-3 py-1.5 text-sm text-white hover:bg-primary-700">
-						<Plus size={16} /> Add Medicine
-					</button>
-					<div className="h-6 w-px bg-slate-300 dark:bg-slate-700 mx-1"></div>
 					<button type="button" className={`rounded border px-3 py-1.5 text-sm ${view === 'grid' ? 'bg-primary-600 text-white' : ''}`} onClick={() => handleView('grid')}>
 						Grid
 					</button>
@@ -109,6 +110,9 @@ const Medicines = () => {
 				</div>
 			)}
 
+			<button type="button" onClick={() => setIsAddOpen(true)} aria-label="Add Medicine" className="fixed bottom-6 right-6 rounded-full bg-primary-600 p-4 text-white shadow-lg hover:scale-105">
+				<Plus size={20} />
+			</button>
 		</section>
 	);
 };

@@ -22,6 +22,7 @@ export const useReminders = (familyId) =>
       if (error) throw error;
       return data;
     },
+    enabled: Boolean(familyId),
   });
 
 export const useTodayReminders = (familyId) =>

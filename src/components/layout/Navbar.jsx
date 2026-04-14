@@ -12,6 +12,7 @@ const links = [
 	{ to: '/reminders', label: 'Reminders' },
 	{ to: '/family', label: 'Family' },
 	{ to: '/health-records', label: 'Health Records' },
+	{ to: '/chatbot', label: 'Chatbot' },
 ];
 
 const Navbar = () => {

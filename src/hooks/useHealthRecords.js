@@ -7,6 +7,7 @@ import {
   getHealthRecordsByType,
   uploadHealthFile,
 } from '../services/healthService';
+import { deleteFile } from '../services/storageService';
 
 export const useHealthRecords = (profileId, filters = {}) =>
   useQuery({
@@ -29,18 +30,26 @@ export const useUploadHealthRecord = () => {
       if (fileRes.error) throw fileRes.error;
 
       onProgress?.(70);
-      const createRes = await addHealthRecord({
-        ...recordData,
-        profile_id: profileId,
-        file_url: fileRes.data.url,
-        file_name: file.name,
-        file_size: file.size,
-        mime_type: file.type,
-      });
-      if (createRes.error) throw createRes.error;
+      try {
+        const createRes = await addHealthRecord({
+          ...recordData,
+          profile_id: profileId,
+          file_url: fileRes.data.url,
+          file_path: fileRes.data.path,
+          file_name: file.name,
+          file_size: file.size,
+          mime_type: file.type,
+        });
+        if (createRes.error) throw createRes.error;
 
-      onProgress?.(100);
-      return createRes.data;
+        onProgress?.(100);
+        return createRes.data;
+      } catch (error) {
+        if (fileRes.data?.path) {
+          await deleteFile('health-files', fileRes.data.path).catch(() => {});
+        }
+        throw error;
+      }
     },
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['health-records', vars.profileId] });

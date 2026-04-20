@@ -9,6 +9,7 @@ import ChatInput from './ChatInput';
 import ChatWindow from './ChatWindow';
 import { MessageCircle, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { getReminderTime } from '../../utils/reminderHelpers';
 
 const ChatbotSidebar = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -27,7 +28,7 @@ const ChatbotSidebar = () => {
 
   const context = useMemo(() => ({
     activeMedicines: medicines?.filter((m) => m?.is_active).map((m) => ({ name: m.name, dose: m.dosage, time: m.timing })),
-    reminders: reminders?.map(r => ({ time: r.scheduled_time, message: r.message, is_taken: r.is_taken })),
+    reminders: reminders?.map(r => ({ time: getReminderTime(r), message: r.message, is_taken: r.is_taken })),
     healthRecords: healthRecords?.map(h => ({ title: h.title, type: h.record_type, date: h.recorded_date }))
   }), [medicines, reminders, healthRecords]);
 

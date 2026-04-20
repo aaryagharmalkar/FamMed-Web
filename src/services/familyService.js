@@ -91,12 +91,47 @@ export const joinFamily = async (inviteCode) => {
 
 export const getFamilyMembers = async (familyId) => {
   try {
-    const { data, error } = await supabase
+    const { data: members, error: membersError } = await supabase
       .from('family_members')
-      .select('*, profiles(id, full_name, avatar_url, role)')
-      .eq('family_id', familyId);
-    if (error) throw error;
-    return handleServiceSuccess(data || []);
+      .select('*')
+      .eq('family_id', familyId)
+      .order('joined_at', { ascending: true });
+
+    if (membersError) throw membersError;
+
+    const memberIds = Array.from(
+      new Set(
+        (members || [])
+          .map((member) => member?.profile_id || member?.user_id || null)
+          .filter(Boolean)
+      )
+    );
+
+    let profilesById = new Map();
+
+    if (memberIds.length > 0) {
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, full_name, avatar_url, role')
+        .in('id', memberIds);
+
+      if (profilesError) throw profilesError;
+
+      profilesById = new Map((profiles || []).map((profile) => [profile.id, profile]));
+    }
+
+    const normalizedMembers = (members || []).map((member) => {
+      const memberProfileId = member?.profile_id || member?.user_id || null;
+
+      return {
+        ...member,
+        profile_id: memberProfileId,
+        member_profile_id: memberProfileId,
+        profiles: profilesById.get(memberProfileId) || null,
+      };
+    });
+
+    return handleServiceSuccess(normalizedMembers);
   } catch (error) {
     return handleServiceError(error);
   }

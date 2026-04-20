@@ -40,6 +40,17 @@ const verifyConnection = async (client) => {
   }
 };
 
+const isMissingDurationColumnError = (error) => {
+  const message = error?.message || '';
+  return /could not find the 'duration' column of 'medicines' in the schema cache/i.test(message);
+};
+
+const stripDuration = (medicine) => {
+  const payload = { ...(medicine || {}) };
+  delete payload.duration;
+  return payload;
+};
+
 export const getMedicines = async (familyId, filters = {}) => {
   try {
     const client = ensureSupabaseClient();
@@ -82,11 +93,20 @@ export const addMedicine = async (medicineData) => {
     const client = ensureSupabaseClient();
     await verifyConnection(client);
 
-    const { data, error } = await withTimeout(
+    let { data, error } = await withTimeout(
       client.from('medicines').insert(medicineData).select('*').single(),
       25000,
       'Save medicine timed out after 25 seconds. Check Supabase project status and network, then try again.'
     );
+
+    // Backward compatibility: retry without duration if DB migration is not yet applied.
+    if (error && isMissingDurationColumnError(error) && Object.hasOwn(medicineData, 'duration')) {
+      ({ data, error } = await withTimeout(
+        client.from('medicines').insert(stripDuration(medicineData)).select('*').single(),
+        25000,
+        'Save medicine timed out after 25 seconds. Check Supabase project status and network, then try again.'
+      ));
+    }
 
     if (error) throw error;
     return handleServiceSuccess(data);
@@ -94,6 +114,79 @@ export const addMedicine = async (medicineData) => {
     return handleServiceError(error);
   }
 };
+
+export const addMedicinesBulk = async (medicines) => {
+  try {
+    if (!Array.isArray(medicines) || medicines.length === 0) {
+      throw new Error('No medicines provided for bulk insert.');
+    }
+
+    const client = ensureSupabaseClient();
+    await verifyConnection(client);
+
+    const timeoutMs = 15000;
+    const timeoutMsg = `Saving ${medicines.length} medicine(s) timed out. Please try again.`;
+
+    let { data, error } = await withTimeout(
+      client.from('medicines').insert(medicines).select('id, name, family_id'),
+      timeoutMs,
+      timeoutMsg
+    );
+
+    // Backward compatibility: retry without duration if DB migration is not yet applied.
+    if (error && isMissingDurationColumnError(error) && medicines.some((item) => Object.hasOwn(item, 'duration'))) {
+      ({ data, error } = await withTimeout(
+        client.from('medicines').insert(medicines.map(stripDuration)).select('id, name, family_id'),
+        timeoutMs,
+        timeoutMsg
+      ));
+    }
+
+    if (error) {
+      const errorMsg = error?.message || String(error);
+      throw new Error(`Bulk save failed: ${errorMsg}`);
+    }
+
+    if (!Array.isArray(data) || !data.length) {
+      throw new Error('Bulk insert returned no data.');
+    }
+
+    return handleServiceSuccess(data);
+  } catch (error) {
+    return handleServiceError(error);
+  }
+};
+
+export const uploadPrescriptionForCurrentUser = async (file) => {
+  try {
+    const client = ensureSupabaseClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await client.auth.getUser();
+
+    if (userError) throw userError;
+    if (!user?.id) throw new Error('You must be logged in to upload a prescription image.');
+
+    const extension = file?.name?.split('.')?.pop() || 'jpg';
+    const safeBaseName = (file?.name || 'prescription')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[^a-zA-Z0-9-_]/g, '-')
+      .slice(0, 50);
+    const path = `${user.id}/prescriptions/${Date.now()}-${safeBaseName}.${extension}`;
+
+    const uploadResult = await uploadFile('health-files', path, file, { cacheControl: '3600' });
+    if (uploadResult.error) throw uploadResult.error;
+
+    const urlResult = await getSignedUrl('health-files', path, 60 * 60 * 24 * 7);
+    if (urlResult.error) throw urlResult.error;
+
+    return handleServiceSuccess({ path, url: urlResult.data });
+  } catch (error) {
+    return handleServiceError(error);
+  }
+};
+
 export const updateMedicine = async (id, updates) => {
   try {
     const client = ensureSupabaseClient();
@@ -150,12 +243,62 @@ export const getLowStockMedicines = async (familyId) => {
       .from('medicines')
       .select('*')
       .eq('family_id', familyId)
-      .filter('stock_count', 'lte', 'low_stock_threshold');
+      .eq('is_active', true)
+      .order('stock_count', { ascending: true });
     if (error) throw error;
-    return handleServiceSuccess(data || []);
+
+    const lowStockMedicines = (data || []).filter((medicine) => {
+      const stockCount = Number(medicine?.stock_count ?? 0);
+      const threshold = Number(medicine?.low_stock_threshold ?? 5);
+      return stockCount <= threshold;
+    });
+
+    return handleServiceSuccess(lowStockMedicines);
   } catch (error) {
     return handleServiceError(error);
   }
 };
 
 export const searchMedicines = async (familyId, query) => getMedicines(familyId, { search: query });
+
+// Migration note for developers:
+// -- ALTER TABLE medicines ADD COLUMN IF NOT EXISTS ai_insights JSONB;
+// -- ALTER TABLE medicines ADD COLUMN IF NOT EXISTS ai_insights_updated_at TIMESTAMPTZ;
+export const saveInsightsToMedicine = async (medicineId, insights) => {
+  try {
+    const client = ensureSupabaseClient();
+    const payload = {
+      ai_insights: insights,
+      ai_insights_updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await client
+      .from('medicines')
+      .update(payload)
+      .eq('id', medicineId)
+      .select('id, ai_insights, ai_insights_updated_at')
+      .single();
+
+    if (error) throw new Error(`[medicineService] ${error.message}`);
+    return handleServiceSuccess(data);
+  } catch (error) {
+    return handleServiceError(error);
+  }
+};
+
+export const clearMedicineInsights = async (medicineId) => {
+  try {
+    const client = ensureSupabaseClient();
+    const { data, error } = await client
+      .from('medicines')
+      .update({ ai_insights: null, ai_insights_updated_at: null })
+      .eq('id', medicineId)
+      .select('id, ai_insights, ai_insights_updated_at')
+      .single();
+
+    if (error) throw new Error(`[medicineService] ${error.message}`);
+    return handleServiceSuccess(data);
+  } catch (error) {
+    return handleServiceError(error);
+  }
+};

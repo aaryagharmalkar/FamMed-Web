@@ -53,8 +53,16 @@ export const deleteHealthRecord = async (id) => {
 
 export const uploadHealthFile = async (file, profileId) => {
   try {
-    const ext = file.name.split('.').pop();
-    const path = `${profileId}/records/${Date.now()}.${ext}`;
+    if (!file) {
+      throw new Error('Please select a file to upload.');
+    }
+
+    const ext = String(file.name || '').split('.').pop() || 'bin';
+    const safeBaseName = String(file.name || 'record')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[^a-zA-Z0-9-_]/g, '-')
+      .slice(0, 60);
+    const path = `${profileId}/records/${Date.now()}-${safeBaseName}.${ext}`;
     const uploadResult = await uploadFile('health-files', path, file, { cacheControl: '3600' });
     if (uploadResult.error) throw uploadResult.error;
 

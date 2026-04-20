@@ -1,144 +1,229 @@
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { BarChart, Bar, CartesianGrid, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { AlertTriangle, Clock3, Flame, Pill } from 'lucide-react';
 import { useAuthContext } from '../context/AuthContext';
 import { useMedicines, useLowStockAlert } from '../hooks/useMedicines';
-import { useLogReminderAction, useReminders, useTodayReminders } from '../hooks/useReminders';
+import { useReminders, useTodayReminders } from '../hooks/useReminders';
+import {
+	useAdherenceAnalytics,
+	useMedicationLogsRealtime,
+	useUpdateMedicationStatus,
+} from '../hooks/useMedicationLogs';
+import { getReminderTime } from '../utils/reminderHelpers';
+import MedicineCard from '../components/medicine/MedicineCard';
 
-const adherenceData = [
-	{ day: 'Mon', value: 80 },
-	{ day: 'Tue', value: 86 },
-	{ day: 'Wed', value: 74 },
-	{ day: 'Thu', value: 90 },
-	{ day: 'Fri', value: 78 },
-	{ day: 'Sat', value: 92 },
-	{ day: 'Sun', value: 88 },
-];
+const HOURS_TWO = 2 * 60 * 60 * 1000;
 
-const trendData = [
-	{ day: 'W1', taken: 22, missed: 4 },
-	{ day: 'W2', taken: 26, missed: 3 },
-	{ day: 'W3', taken: 24, missed: 5 },
-	{ day: 'W4', taken: 27, missed: 2 },
-];
+const parseScheduledDate = (reminder) => {
+	const reminderTime = getReminderTime(reminder);
+	if (!reminderTime) return null;
+
+	if (typeof reminderTime === 'string' && reminderTime.includes('T')) {
+		return new Date(reminderTime);
+	}
+
+	const [hours = 0, minutes = 0, seconds = 0] = String(reminderTime)
+		.split(':')
+		.map((part) => Number(part));
+	const scheduled = new Date();
+	scheduled.setHours(hours, minutes, seconds || 0, 0);
+	return scheduled;
+};
 
 const Dashboard = () => {
-	const { familyId } = useAuthContext();
-	const { data: medicines = [] } = useMedicines(familyId);
+	const { familyId, user, memberships = [] } = useAuthContext();
+	const familyName = memberships.find((membership) => (membership?.family_id || membership?.families?.id) === familyId)?.families?.name || 'No family selected';
+	const hasFamily = Boolean(familyId);
+
+	const { data: assignedMedicines = [] } = useMedicines(familyId, { assignedTo: user?.id || '__pending__', isActive: true });
 	const { data: reminders = [] } = useReminders(familyId);
 	const { data: today = [] } = useTodayReminders(familyId);
 	const { data: lowStock = [] } = useLowStockAlert(familyId);
-	const logReminderAction = useLogReminderAction();
-	const handleReminderAction = async (reminderId, action) => {
+	const { data: analytics } = useAdherenceAnalytics({ userId: user?.id, days: 30 });
+	const updateMedicationStatus = useUpdateMedicationStatus();
+
+	useMedicationLogsRealtime({
+		userId: user?.id,
+		familyId,
+		enabled: Boolean(user?.id && hasFamily),
+	});
+
+	if (!hasFamily) {
+		return (
+			<section className="card space-y-4">
+				<h1 className="text-2xl font-semibold">No active family selected</h1>
+				<p className="text-sm" style={{ color: 'var(--muted)' }}>
+					No active family selected. Please join or create a family.
+				</p>
+				<Link to="/family" className="btn-primary inline-flex w-fit items-center justify-center px-4 py-2">
+					Go to Family Setup
+				</Link>
+			</section>
+		);
+	}
+
+	const handleReminderAction = async (reminder, status) => {
+		if (!reminder?.id || !user?.id) return;
+
 		try {
-			await logReminderAction.mutateAsync({ reminderId, action });
+			await updateMedicationStatus.mutateAsync({
+				userId: user.id,
+				reminder,
+				status,
+				rescheduleMinutes: 15,
+			});
 		} catch {
-			toast.error('Failed to log reminder action');
+			toast.error('Failed to update medication status');
 		}
 	};
 
+	const queueItems = (today.length ? today : reminders)
+		.filter((item) => !['taken', 'missed'].includes(item?.status))
+		.map((item) => ({
+			...item,
+			scheduledAt: parseScheduledDate(item),
+		}))
+		.filter((item) => item.scheduledAt instanceof Date && !Number.isNaN(item.scheduledAt.getTime()))
+		.sort((a, b) => a.scheduledAt - b.scheduledAt);
 
-	const pieData = Object.values(
-		medicines.reduce((acc, item) => {
-			acc[item.form || 'other'] = acc[item.form || 'other'] || { name: item.form || 'other', value: 0 };
-			acc[item.form || 'other'].value += 1;
-			return acc;
-		}, {})
-	);
+	const now = new Date();
+	const overdueItems = queueItems.filter((item) => item.scheduledAt < now);
+	const dueNowItems = queueItems.filter((item) => item.scheduledAt >= now && item.scheduledAt - now <= HOURS_TWO);
+	const upcomingItems = queueItems.filter((item) => item.scheduledAt - now > HOURS_TWO);
+
+	const todayIso = new Date().toISOString().slice(0, 10);
+	const todayMetrics = analytics?.daily?.find((item) => item.date === todayIso);
+	const dosesTakenToday = todayMetrics?.taken || 0;
+	const dosesTotalToday = todayMetrics?.total || queueItems.length || 0;
 
 	const statCards = [
-		{ title: 'Active Medicines', value: medicines.filter((m) => m.is_active).length },
-		{ title: "Today's Reminders", value: `${today.length} total` },
-		{ title: 'Low Stock Alerts', value: lowStock.length },
-		{ title: 'Total Reminders', value: reminders.length },
+		{ title: 'Doses taken today', value: `${dosesTakenToday}/${dosesTotalToday || 0}`, icon: Pill, tone: 'var(--primary)' },
+		{ title: 'Overdue right now', value: overdueItems.length, icon: AlertTriangle, tone: 'var(--danger)' },
+		{ title: 'Current streak', value: `${analytics?.streak || 0} day(s)`, icon: Flame, tone: 'var(--warn)' },
 	];
+
+	const renderQueueItem = (item, section) => {
+		const timeLabel = item.scheduledAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		const hoursOverdue = Math.max(1, Math.floor((now - item.scheduledAt) / (60 * 60 * 1000)));
+		const borderColor = section === 'overdue' ? 'var(--danger)' : section === 'now' ? 'var(--primary)' : 'var(--border)';
+
+		return (
+			<article key={item.id} className="rounded-xl border-l-4 border p-3" style={{ borderLeftColor: borderColor, borderColor: 'var(--border)', background: section === 'upcoming' ? 'var(--surface-2)' : 'var(--surface)' }}>
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<div>
+						<p className="text-base font-semibold">{item.medicines?.name || 'Medicine'}</p>
+						<p className="text-xs" style={{ color: 'var(--muted)' }}>{item.medicines?.dosage || 'Dosage not set'}</p>
+					</div>
+					<div className="text-right">
+						<span className="badge badge-primary">{timeLabel}</span>
+						{section === 'overdue' && (
+							<p className="mt-1 text-xs text-danger-600">{hoursOverdue} hour(s) overdue</p>
+						)}
+					</div>
+				</div>
+
+				{section !== 'upcoming' && (
+					<div className="mt-3 flex flex-wrap justify-end gap-2">
+						<button className="btn-accent min-h-[44px] px-4 py-2 text-sm disabled:opacity-60" type="button" onClick={() => handleReminderAction(item, 'taken')} disabled={updateMedicationStatus.isPending}>
+							Taken
+						</button>
+						<button className="min-h-[44px] rounded-[12px] px-4 py-2 text-sm text-white disabled:opacity-60" style={{ background: 'var(--danger)' }} type="button" onClick={() => handleReminderAction(item, 'missed')} disabled={updateMedicationStatus.isPending}>
+							Missed
+						</button>
+						<button className="min-h-[44px] rounded-[12px] px-4 py-2 text-sm text-white disabled:opacity-60" style={{ background: 'var(--warn)' }} type="button" onClick={() => handleReminderAction(item, 'rescheduled')} disabled={updateMedicationStatus.isPending}>
+							Later
+						</button>
+					</div>
+				)}
+			</article>
+		);
+	};
 
 	return (
 		<section className="space-y-6">
-			<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+			<div className="section-title card">
+				<p className="badge badge-primary">Today</p>
+				<h1 className="mt-3 text-3xl sm:text-4xl">Today's Actions</h1>
+				<p className="mt-2 text-sm" style={{ color: 'var(--muted)' }}>What needs your attention right now</p>
+				<p className="mt-1 text-[13px]" style={{ color: 'var(--muted)' }}>Showing data for: {familyName}</p>
+			</div>
+
+			<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
 				{statCards.map((card) => (
-					<article key={card.title} className="rounded-lg border bg-white p-4 shadow-card dark:border-slate-700 dark:bg-slate-800">
-						<p className="text-sm text-slate-500">{card.title}</p>
-						<p className="mt-2 text-2xl font-semibold">{card.value}</p>
+					<article key={card.title} className="card feature-item">
+						<div className="flex items-center justify-between gap-3">
+							<div>
+								<p className="text-sm" style={{ color: 'var(--muted)' }}>{card.title}</p>
+								<p className="mt-2 text-2xl font-semibold">{card.value}</p>
+							</div>
+							<span className="icon-box" style={{ background: `${card.tone}1c` }}>
+								<card.icon size={20} color={card.tone} />
+							</span>
+						</div>
 					</article>
 				))}
 			</div>
 
-			<div className="grid gap-4 xl:grid-cols-3">
-				<article className="rounded-lg border bg-white p-4 dark:border-slate-700 dark:bg-slate-800 xl:col-span-2">
-					<h2 className="mb-3 font-semibold">Medication adherence (7 days)</h2>
-					<div className="h-56">
-						<ResponsiveContainer>
-							<BarChart data={adherenceData}>
-								<CartesianGrid strokeDasharray="3 3" />
-								<XAxis dataKey="day" />
-								<YAxis />
-								<Tooltip />
-								<Bar dataKey="value" fill="#4f46e5" />
-							</BarChart>
-						</ResponsiveContainer>
-					</div>
+			{lowStock.length > 0 && (
+				<article className="rounded-xl border-l-4 p-3" style={{ borderLeftColor: 'var(--warn)', borderColor: 'var(--border)', background: 'var(--surface)' }}>
+					<p className="font-semibold">Low stock alert</p>
+					<p className="text-sm" style={{ color: 'var(--muted)' }}>
+						{lowStock.length} medicine(s) are running low. Refill soon.
+					</p>
 				</article>
+			)}
 
-				<article className="rounded-lg border bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-					<h2 className="mb-3 font-semibold">Medicines by category</h2>
-					<div className="h-56">
-						<ResponsiveContainer>
-							<PieChart>
-								<Pie data={pieData} dataKey="value" nameKey="name" outerRadius={72} fill="#14b8a6" />
-								<Tooltip />
-							</PieChart>
-						</ResponsiveContainer>
-					</div>
-				</article>
-			</div>
-
-			<article className="rounded-lg border bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-				<h2 className="mb-3 font-semibold">Missed vs taken (30 days)</h2>
-				<div className="h-56">
-					<ResponsiveContainer>
-						<LineChart data={trendData}>
-							<CartesianGrid strokeDasharray="3 3" />
-							<XAxis dataKey="day" />
-							<YAxis />
-							<Tooltip />
-							<Line type="monotone" dataKey="taken" stroke="#10b981" strokeWidth={2} />
-							<Line type="monotone" dataKey="missed" stroke="#ef4444" strokeWidth={2} />
-						</LineChart>
-					</ResponsiveContainer>
-				</div>
-			</article>
-
-			<div className="grid gap-4 lg:grid-cols-2">
-				<article className="rounded-lg border bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-					<h2 className="mb-3 font-semibold">Quick actions</h2>
-					<div className="grid gap-2 sm:grid-cols-2">
-						<Link className="rounded bg-primary-600 px-3 py-2 text-center text-sm text-white" to="/medicines">Add Medicine</Link>
-						<Link className="rounded bg-secondary-600 px-3 py-2 text-center text-sm text-white" to="/reminders">Set Reminder</Link>
-						<Link className="rounded bg-accent-500 px-3 py-2 text-center text-sm text-white" to="/health-records">Upload Record</Link>
-						<Link className="rounded bg-slate-700 px-3 py-2 text-center text-sm text-white" to="/chatbot">Ask Chatbot</Link>
-					</div>
-				</article>
-
-				<article className="rounded-lg border bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-					<h2 className="mb-3 font-semibold">Today's schedule</h2>
-					<div className="space-y-2">
-						{today.length === 0 && <p className="text-sm text-slate-500">No reminders for today.</p>}
-						{today.slice(0, 10).map((item) => (
-							<div key={item.id} className="flex items-center justify-between rounded border p-2 dark:border-slate-700">
-								<div>
-									<p className="text-sm font-medium">{item.medicines?.name || 'Medicine'}</p>
-									<p className="text-xs text-slate-500">{item.scheduled_time}</p>
-								</div>
-								<div className="flex gap-2">
-									<button type="button" onClick={() => handleReminderAction(item.id, 'taken')} className="rounded bg-success-600 px-2 py-1 text-xs text-white">Taken</button>
-									<button type="button" onClick={() => handleReminderAction(item.id, 'skipped')} className="rounded bg-slate-500 px-2 py-1 text-xs text-white">Skip</button>
-								</div>
-							</div>
+			<div className="space-y-4">
+				<h2 className="text-xl font-bold">My medicines</h2>
+				{assignedMedicines.length === 0 ? (
+					<article className="card">
+						<p className="text-sm" style={{ color: 'var(--muted)' }}>
+							No medicines are assigned to you yet.
+						</p>
+					</article>
+				) : (
+					<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+						{assignedMedicines.map((medicine) => (
+							<MedicineCard key={medicine.id} medicine={medicine} />
 						))}
 					</div>
-				</article>
+				)}
 			</div>
+
+			<div className="space-y-4">
+				<h2 className="text-xl font-bold">Today's Queue</h2>
+
+				<div className="space-y-2">
+					<div className="flex items-center gap-2">
+						<span className="badge badge-danger animate-pulse-soft">OVERDUE</span>
+					</div>
+					{overdueItems.length === 0 ? (
+						<p className="text-sm" style={{ color: 'var(--muted)' }}>No overdue doses.</p>
+					) : overdueItems.map((item) => renderQueueItem(item, 'overdue'))}
+				</div>
+
+				<div className="space-y-2">
+					<div className="flex items-center gap-2">
+						<span className="badge badge-primary">DUE NOW</span>
+					</div>
+					{dueNowItems.length === 0 ? (
+						<p className="text-sm" style={{ color: 'var(--muted)' }}>No doses due in the next 2 hours.</p>
+					) : dueNowItems.map((item) => renderQueueItem(item, 'now'))}
+				</div>
+
+				<div className="space-y-2">
+					<div className="flex items-center gap-2">
+						<span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}><Clock3 size={12} className="mr-1 inline" />UPCOMING</span>
+					</div>
+					{upcomingItems.length === 0 ? (
+						<p className="text-sm" style={{ color: 'var(--muted)' }}>No upcoming doses left today.</p>
+					) : upcomingItems.map((item) => renderQueueItem(item, 'upcoming'))}
+				</div>
+			</div>
+
+			<Link to="/analytics" className="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold" style={{ borderColor: 'var(--border)', color: 'var(--primary)' }}>
+				📊 View 30-day adherence trends →
+			</Link>
 		</section>
 	);
 };

@@ -11,11 +11,13 @@ import {
 } from '../services/reminderService';
 import { supabase } from '../lib/supabaseClient';
 import { showBrowserNotification } from '../lib/notifications';
+import { getReminderTime } from '../utils/reminderHelpers';
 
 const chime = 'data:audio/wav;base64,UklGRlQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSAAAAAA';
 
 export const useReminders = (familyId) =>
-  useQuery({
+  {
+    const query = useQuery({
     queryKey: ['reminders', familyId],
     queryFn: async () => {
       const { data, error } = await getReminders(familyId);
@@ -25,8 +27,21 @@ export const useReminders = (familyId) =>
     enabled: Boolean(familyId),
   });
 
+    if (!familyId) {
+      return {
+        ...query,
+        data: [],
+        isLoading: false,
+        error: new Error('No active family'),
+      };
+    }
+
+    return query;
+  };
+
 export const useTodayReminders = (familyId) =>
-  useQuery({
+  {
+    const query = useQuery({
     queryKey: ['reminders', 'today', familyId],
     queryFn: async () => {
       const { data, error } = await getTodayReminders(familyId);
@@ -35,6 +50,18 @@ export const useTodayReminders = (familyId) =>
     },
     enabled: Boolean(familyId),
   });
+
+    if (!familyId) {
+      return {
+        ...query,
+        data: [],
+        isLoading: false,
+        error: new Error('No active family'),
+      };
+    }
+
+    return query;
+  };
 
 export const useCreateReminder = () => {
   const queryClient = useQueryClient();
@@ -86,35 +113,42 @@ export const useReminderScheduler = (familyId) => {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (!familyId) return undefined;
+    if (!familyId || !supabase) return undefined;
 
-    const channel = supabase
-      .channel(`reminders-${familyId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'reminders', filter: `family_id=eq.${familyId}` },
-        (payload) => {
-          queryClient.invalidateQueries({ queryKey: ['reminders', familyId] });
+    let channel;
 
-          const next = payload.new;
-          if (!next?.scheduled_time) return;
+    // Delay subscription by one tick so React StrictMode dev remount does not spam transient WS warnings.
+    const timer = window.setTimeout(() => {
+      channel = supabase
+        .channel(`reminders-${familyId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'reminders', filter: `family_id=eq.${familyId}` },
+          (payload) => {
+            queryClient.invalidateQueries({ queryKey: ['reminders', familyId] });
 
-          const [h, m] = next.scheduled_time.split(':').map(Number);
-          const now = new Date();
-          if (now.getHours() === h && Math.abs(now.getMinutes() - m) <= 1) {
-            showBrowserNotification('Medicine Reminder', `Take your medicine now`);
-            toast.success('Take your medicine now', { duration: 10000 });
+            const next = payload.new;
+            const reminderTime = getReminderTime(next);
+            if (!reminderTime || typeof reminderTime !== 'string') return;
 
-            const audio = new Audio(chime);
-            audio.volume = 0.25;
-            audio.play().catch(() => {});
+            const [h, m] = reminderTime.split(':').map(Number);
+            const now = new Date();
+            if (now.getHours() === h && Math.abs(now.getMinutes() - m) <= 1) {
+              showBrowserNotification('Medicine Reminder', `Take your medicine now`);
+              toast.success('Take your medicine now', { duration: 10000 });
+
+              const audio = new Audio(chime);
+              audio.volume = 0.25;
+              audio.play().catch(() => {});
+            }
           }
-        }
-      )
-      .subscribe();
+        )
+        .subscribe();
+    }, 0);
 
     return () => {
-      supabase.removeChannel(channel);
+      window.clearTimeout(timer);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [familyId, queryClient]);
 };

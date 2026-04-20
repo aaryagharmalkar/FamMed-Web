@@ -1,5 +1,63 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
+
+const buildFallbackProfile = (nextUser, existingProfile = null) => {
+  if (!nextUser?.id) return null;
+
+  const fullName =
+    existingProfile?.full_name ||
+    nextUser.user_metadata?.full_name ||
+    nextUser.user_metadata?.name ||
+    nextUser.email?.split('@')[0] ||
+    'Member';
+
+  return {
+    id: nextUser.id,
+    full_name: fullName,
+    avatar_url: existingProfile?.avatar_url || nextUser.user_metadata?.avatar_url || null,
+    role: existingProfile?.role || 'member',
+  };
+};
+
+const resolveProfile = async (nextUser, existingProfile = null) => {
+  if (!nextUser?.id) return null;
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', nextUser.id)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (data) return data;
+
+  const fallbackProfile = buildFallbackProfile(nextUser, existingProfile);
+
+  const { error: upsertError } = await supabase.from('profiles').upsert({
+    id: nextUser.id,
+    full_name: fallbackProfile?.full_name || 'Member',
+    avatar_url: fallbackProfile?.avatar_url || null,
+  });
+
+  if (upsertError) {
+    throw upsertError;
+  }
+
+  const { data: recoveredProfile, error: recoveredError } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', nextUser.id)
+    .maybeSingle();
+
+  if (recoveredError) {
+    throw recoveredError;
+  }
+
+  return recoveredProfile ?? fallbackProfile;
+};
 
 export const useAuth = () => {
   const [user, setUser] = useState(null);
@@ -7,21 +65,38 @@ export const useAuth = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
 
+  const clearAuthState = useCallback(() => {
+    setUser(null);
+    setProfile(null);
+    setAuthError(null);
+    setIsLoading(false);
+  }, []);
+
   useEffect(() => {
     let mounted = true;
-    const timeout = setTimeout(() => {
-      if (mounted) {
-        setAuthError(new Error('Auth request timed out.'));
-        setIsLoading(false);
-      }
-    }, 10000);
+    let initialSessionResolved = false;
+    let nullSessionFallback = null;
+    const bootstrapTimeout = setTimeout(() => {
+      if (!mounted || initialSessionResolved) return;
+      initialSessionResolved = true;
+      setAuthError((prev) => prev ?? new Error('Auth initialization timed out.'));
+      setIsLoading(false);
+    }, 12000);
+
+    const finishBootstrap = () => {
+      if (!mounted || initialSessionResolved) return;
+      initialSessionResolved = true;
+      clearTimeout(bootstrapTimeout);
+      if (nullSessionFallback) clearTimeout(nullSessionFallback);
+      setIsLoading(false);
+    };
 
     const fetchAuth = async () => {
       try {
         const {
-          data: { user: currentUser },
+          data: { session },
           error,
-        } = await supabase.auth.getUser();
+        } = await supabase.auth.getSession();
 
         if (!mounted) return;
         if (error) {
@@ -30,102 +105,77 @@ export const useAuth = () => {
           return;
         }
 
+        const currentUser = session?.user ?? null;
         setUser(currentUser ?? null);
 
-        if (currentUser?.id) {
-          const { data } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', currentUser.id)
-            .maybeSingle();
-
-          if (!data) {
-            const fallbackName =
-              currentUser.user_metadata?.full_name ||
-              currentUser.user_metadata?.name ||
-              currentUser.email?.split('@')[0] ||
-              'Member';
-
-            await supabase.from('profiles').upsert({
-              id: currentUser.id,
-              full_name: fallbackName,
-              avatar_url: currentUser.user_metadata?.avatar_url || null,
+        if (currentUser) {
+          setProfile((prev) => prev ?? buildFallbackProfile(currentUser));
+          resolveProfile(currentUser)
+            .then((resolvedProfile) => {
+              if (mounted) {
+                setProfile((prev) => resolvedProfile ?? prev ?? buildFallbackProfile(currentUser));
+              }
+            })
+            .catch((error) => {
+              if (mounted) {
+                setProfile((prev) => prev ?? buildFallbackProfile(currentUser));
+                setAuthError((prev) => prev ?? error);
+              }
+            })
+            .finally(() => {
+              finishBootstrap();
             });
-
-            const { data: recoveredProfile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', currentUser.id)
-              .maybeSingle();
-
-            if (mounted) setProfile(recoveredProfile ?? null);
-          } else if (mounted) {
-            setProfile(data);
-          }
         } else {
-          setProfile(null);
+          nullSessionFallback = setTimeout(() => {
+            finishBootstrap();
+          }, 2000);
         }
       } catch (error) {
         if (mounted) {
           setUser(null);
           setProfile(null);
           setAuthError(error);
+          setIsLoading(false);
         }
-      } finally {
-        if (mounted) setIsLoading(false);
       }
     };
 
-    fetchAuth();
-
     const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       try {
+        if (!mounted) return;
         setAuthError(null);
+        if (nullSessionFallback) {
+          clearTimeout(nullSessionFallback);
+          nullSessionFallback = null;
+        }
         const nextUser = session?.user ?? null;
         setUser(nextUser);
-        if (nextUser?.id) {
-          const { data } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', nextUser.id)
-            .maybeSingle();
 
-          if (!data) {
-            const fallbackName =
-              nextUser.user_metadata?.full_name ||
-              nextUser.user_metadata?.name ||
-              nextUser.email?.split('@')[0] ||
-              'Member';
-
-            await supabase.from('profiles').upsert({
-              id: nextUser.id,
-              full_name: fallbackName,
-              avatar_url: nextUser.user_metadata?.avatar_url || null,
-            });
-
-            const { data: recoveredProfile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', nextUser.id)
-              .maybeSingle();
-
-            setProfile(recoveredProfile ?? null);
-          } else {
-            setProfile(data ?? null);
-          }
-        } else {
+        if (!nextUser) {
           setProfile(null);
+          finishBootstrap();
+          return;
         }
+
+        setProfile((prev) => prev ?? buildFallbackProfile(nextUser));
+
+        const resolvedProfile = await resolveProfile(nextUser);
+        if (!mounted) return;
+        setProfile((prev) => resolvedProfile ?? prev ?? buildFallbackProfile(nextUser));
+        finishBootstrap();
       } catch (error) {
+        if (!mounted) return;
         setAuthError(error);
-        setProfile(null);
+        finishBootstrap();
       }
-      setIsLoading(false);
     });
+
+    fetchAuth();
 
     return () => {
       mounted = false;
-      clearTimeout(timeout);
+      clearTimeout(bootstrapTimeout);
+      if (nullSessionFallback) clearTimeout(nullSessionFallback);
       authListener?.subscription?.unsubscribe();
     };
   }, []);
@@ -137,7 +187,8 @@ export const useAuth = () => {
       isLoading,
       authError,
       isAuthenticated: Boolean(user),
+      clearAuthState,
     }),
-    [user, profile, isLoading, authError]
+    [user, profile, isLoading, authError, clearAuthState]
   );
 };

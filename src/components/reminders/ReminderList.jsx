@@ -1,14 +1,16 @@
 import ReminderCard from './ReminderCard';
 
-const ReminderList = ({ reminders, onTaken, onSkip, onSnooze }) => (
+const ReminderList = ({ reminders, onTaken, onMissed, onRemindLater, isBusy = false }) => (
 	<div className="space-y-3">
 		{reminders.map((reminder) => (
 			<ReminderCard
 				key={reminder.id}
 				reminder={reminder}
-				onTaken={onTaken}
-				onSkip={onSkip}
-				onSnooze={onSnooze}
+				medicine={reminder.medicines}
+				onTaken={() => onTaken(reminder)}
+				onMissed={() => onMissed(reminder)}
+				onRemindLater={() => onRemindLater(reminder)}
+				isBusy={isBusy}
 			/>
 		))}
 	</div>

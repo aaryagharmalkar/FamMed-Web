@@ -7,6 +7,27 @@ if (API_KEY) {
   genAI = new GoogleGenerativeAI(API_KEY);
 }
 
+const CHAT_MODELS = [
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-1.5-flash',
+];
+
+const isTransientModelError = (error) => {
+  const message = String(error?.message || '').toLowerCase();
+
+  return (
+    message.includes('high demand') ||
+    message.includes('resource exhausted') ||
+    message.includes('temporarily unavailable') ||
+    message.includes('rate limit') ||
+    message.includes('quota') ||
+    message.includes('server error') ||
+    error?.status === 429 ||
+    error?.status === 503
+  );
+};
+
 const SYSTEM_PROMPT = `You are FamMed's AI health assistant. You help families understand medicines, dosage schedules, potential side effects, drug interactions, and general wellness.
 Always recommend consulting a doctor for medical decisions. Keep responses concise, friendly, and evidence-based.
 
@@ -71,11 +92,6 @@ export const sendMessage = async (messages, context = {}) => {
   }
 
   try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
-      systemInstruction: SYSTEM_PROMPT + '\n\n' + contextString,
-    });
-
     // Format history for GoogleGenerativeAI
     const safeHistory = Array.isArray(messages) ? [...messages] : [];
     const lastMessage = safeHistory.pop();
@@ -89,17 +105,35 @@ export const sendMessage = async (messages, context = {}) => {
       parts: [{ text: m.content || '' }],
     }));
 
-    const chat = model.startChat({
-      history,
-      generationConfig: {
-        temperature: 0.4,
-      },
-    });
+    let lastError = null;
 
-    const result = await chat.sendMessage(lastMessage.content);
-    const responseText = result.response.text();
+    for (const modelName of CHAT_MODELS) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          systemInstruction: SYSTEM_PROMPT + '\n\n' + contextString,
+        });
 
-    return { data: responseText || "I couldn't generate a response. Please try again.", error: null };
+        const chat = model.startChat({
+          history,
+          generationConfig: {
+            temperature: 0.4,
+          },
+        });
+
+        const result = await chat.sendMessage(lastMessage.content);
+        const responseText = result.response.text();
+
+        return { data: responseText || "I couldn't generate a response. Please try again.", error: null };
+      } catch (error) {
+        lastError = error;
+        if (!isTransientModelError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    return { data: null, error: lastError || new Error('All Gemini chat models are temporarily unavailable.') };
   } catch (error) {
     console.error("Gemini API Error:", error);
     return { data: null, error };

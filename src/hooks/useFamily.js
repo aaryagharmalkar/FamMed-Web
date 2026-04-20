@@ -20,7 +20,8 @@ const withTimeout = (promise, ms = 15000, message = 'Request timed out') =>
   ]);
 
 export const useFamily = (familyId) =>
-  useQuery({
+  {
+    const query = useQuery({
     queryKey: ['family', familyId],
     queryFn: async () => {
       const { data, error } = await getFamilyDetails(familyId);
@@ -30,8 +31,21 @@ export const useFamily = (familyId) =>
     enabled: Boolean(familyId),
   });
 
+    if (!familyId) {
+      return {
+        ...query,
+        data: [],
+        isLoading: false,
+        error: new Error('No active family'),
+      };
+    }
+
+    return query;
+  };
+
 export const useFamilyMembers = (familyId) =>
-  useQuery({
+  {
+    const query = useQuery({
     queryKey: ['family-members', familyId],
     queryFn: async () => {
       const { data, error } = await getFamilyMembers(familyId);
@@ -40,6 +54,18 @@ export const useFamilyMembers = (familyId) =>
     },
     enabled: Boolean(familyId),
   });
+
+    if (!familyId) {
+      return {
+        ...query,
+        data: [],
+        isLoading: false,
+        error: new Error('No active family'),
+      };
+    }
+
+    return query;
+  };
 
 export const useUserFamilies = (profileId) =>
   useQuery({

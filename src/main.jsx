@@ -11,6 +11,34 @@ import { NotificationProvider } from './context/NotificationContext';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 import { hasSupabaseEnv, supabaseConfigError } from './lib/supabaseClient';
 
+const setupScrollAnimations = () => {
+  const selector = '.card, .section-title, .feature-item, .step';
+  const seen = new WeakSet();
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('animate-fade-up');
+        observer.unobserve(entry.target);
+      });
+    },
+    { threshold: 0.15, rootMargin: '0px 0px -10% 0px' }
+  );
+
+  const watch = () => {
+    document.querySelectorAll(selector).forEach((element) => {
+      if (seen.has(element)) return;
+      seen.add(element);
+      observer.observe(element);
+    });
+  };
+
+  watch();
+  const mo = new MutationObserver(watch);
+  mo.observe(document.body, { childList: true, subtree: true });
+};
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -26,7 +54,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     {hasSupabaseEnv ? (
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <BrowserRouter>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AuthProvider>
               <FamilyProvider>
                 <NotificationProvider>
@@ -54,3 +82,5 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     )}
   </React.StrictMode>
 );
+
+setupScrollAnimations();

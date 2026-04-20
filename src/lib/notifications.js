@@ -1,3 +1,5 @@
+import { getReminderTime } from '../utils/reminderHelpers';
+
 const activeIntervals = new Map();
 
 export const requestNotificationPermission = async () => {
@@ -12,10 +14,21 @@ export const showBrowserNotification = (title, body, icon) => {
 };
 
 export const scheduleLocalReminder = (reminder) => {
-  if (!reminder?.id || !reminder?.scheduled_time) return () => {};
+  const reminderTime = getReminderTime(reminder);
+  if (!reminder?.id || !reminderTime) return () => {};
 
   const now = new Date();
-  const [hours, minutes] = reminder.scheduled_time.split(':').map(Number);
+  let hours = 0;
+  let minutes = 0;
+
+  if (typeof reminderTime === 'string' && reminderTime.includes('T')) {
+    const parsed = new Date(reminderTime);
+    hours = parsed.getHours();
+    minutes = parsed.getMinutes();
+  } else {
+    [hours, minutes] = String(reminderTime).split(':').map(Number);
+  }
+
   const triggerAt = new Date();
   triggerAt.setHours(hours || 0, minutes || 0, 0, 0);
   if (triggerAt < now) triggerAt.setDate(triggerAt.getDate() + 1);

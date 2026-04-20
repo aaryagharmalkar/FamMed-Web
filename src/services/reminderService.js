@@ -1,6 +1,36 @@
 import { endOfDay, startOfDay } from 'date-fns';
 import { supabase } from '../lib/supabaseClient';
 import { handleServiceError, handleServiceSuccess } from './serviceHelpers';
+import { deleteGoogleCalendarEventById } from './googleCalendarService';
+
+// Migration note for developers:
+// -- ALTER TABLE reminders ADD COLUMN IF NOT EXISTS google_event_id TEXT;
+// -- ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source TEXT;
+
+const isMissingReminderSourceColumnError = (error) =>
+  /could not find the 'source' column of 'reminders' in the schema cache/i.test(String(error?.message || ''));
+
+const wrapReminderServiceError = (error) =>
+  new Error(`[reminderService] ${error?.message || 'Unknown Supabase error'}`);
+
+const toDbScheduledTime = (value) => {
+  if (!value) {
+    const now = new Date();
+    return now.toTimeString().slice(0, 8);
+  }
+
+  if (typeof value === 'string' && /^\d{2}:\d{2}(:\d{2})?$/.test(value)) {
+    return value.length === 5 ? `${value}:00` : value;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    const now = new Date();
+    return now.toTimeString().slice(0, 8);
+  }
+
+  return parsed.toTimeString().slice(0, 8);
+};
 
 export const getReminders = async (familyId) => {
   try {
@@ -28,8 +58,27 @@ export const getRemindersByMedicine = async (medicineId) => {
 
 export const createReminder = async (reminderData) => {
   try {
-    const { data, error } = await supabase.from('reminders').insert(reminderData).select('*').single();
-    if (error) throw error;
+    const {
+      scheduled_time,
+      date_time,
+      scheduled_at,
+      ...rest
+    } = reminderData || {};
+
+    const payload = {
+      ...rest,
+      scheduled_time: toDbScheduledTime(scheduled_time || date_time || scheduled_at),
+    };
+
+    let { data, error } = await supabase.from('reminders').insert(payload).select('*').single();
+
+    if (error && isMissingReminderSourceColumnError(error) && Object.hasOwn(payload, 'source')) {
+      const withoutSource = { ...payload };
+      delete withoutSource.source;
+      ({ data, error } = await supabase.from('reminders').insert(withoutSource).select('*').single());
+    }
+
+    if (error) throw wrapReminderServiceError(error);
     return handleServiceSuccess(data);
   } catch (error) {
     return handleServiceError(error);
@@ -39,7 +88,7 @@ export const createReminder = async (reminderData) => {
 export const updateReminder = async (id, updates) => {
   try {
     const { data, error } = await supabase.from('reminders').update(updates).eq('id', id).select('*').single();
-    if (error) throw error;
+    if (error) throw wrapReminderServiceError(error);
     return handleServiceSuccess(data);
   } catch (error) {
     return handleServiceError(error);
@@ -47,10 +96,83 @@ export const updateReminder = async (id, updates) => {
 };
 
 export const deleteReminder = async (id) => {
+  return deleteReminderAndCalendarEvent(id);
+};
+
+export const deleteReminderAndCalendarEvent = async (reminderId) => {
   try {
-    const { error } = await supabase.from('reminders').delete().eq('id', id);
-    if (error) throw error;
+    const { data: reminder, error: reminderError } = await supabase
+      .from('reminders')
+      .select('id, google_event_id, event_id')
+      .eq('id', reminderId)
+      .maybeSingle();
+
+    if (reminderError) throw wrapReminderServiceError(reminderError);
+
+    const googleEventId = reminder?.google_event_id || reminder?.event_id;
+    if (googleEventId) {
+      await deleteGoogleCalendarEventById(googleEventId);
+    }
+
+    const { error } = await supabase.from('reminders').delete().eq('id', reminderId);
+    if (error) throw wrapReminderServiceError(error);
+
     return handleServiceSuccess(true);
+  } catch (error) {
+    return handleServiceError(error);
+  }
+};
+
+export const findReminderForMedicine = async (medicineId, sourceScheduledTime) => {
+  try {
+    const normalizedTime = toDbScheduledTime(sourceScheduledTime);
+    const { data, error } = await supabase
+      .from('reminders')
+      .select('*')
+      .eq('medicine_id', medicineId)
+      .eq('scheduled_time', normalizedTime)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw wrapReminderServiceError(error);
+    return handleServiceSuccess(data || null);
+  } catch (error) {
+    return handleServiceError(error);
+  }
+};
+
+/**
+ * Reminder types:
+ * SCHEDULED: created with a real planned schedule during medicine/reminder setup.
+ * ON_DEMAND: created at action time when no matching scheduled reminder exists.
+ */
+export const ensureReminder = async (medicineId, familyId, sourceScheduledTime, assignedTo = null, userId = null) => {
+  try {
+    const { data: existing, error: existingError } = await findReminderForMedicine(medicineId, sourceScheduledTime);
+    if (existingError) throw existingError;
+    if (existing) return handleServiceSuccess(existing);
+
+    if (!sourceScheduledTime) {
+      console.warn('ensureReminder: sourceScheduledTime missing, creating on-demand reminder using current time.');
+    }
+
+    const scheduledTime = sourceScheduledTime || new Date().toISOString();
+    const { data, error } = await createReminder({
+      medicine_id: medicineId,
+      family_id: familyId,
+      assigned_to: assignedTo,
+      user_id: userId || assignedTo,
+      scheduled_time: scheduledTime,
+      days_of_week: [0, 1, 2, 3, 4, 5, 6],
+      is_active: true,
+      notification_method: ['in-app'],
+      source: 'on_demand',
+    });
+
+    if (error) throw error;
+    return handleServiceSuccess(data);
   } catch (error) {
     return handleServiceError(error);
   }
@@ -63,13 +185,13 @@ export const logReminderAction = async (reminderId, action, notes = '') => {
       .select('id, medicine_id')
       .eq('id', reminderId)
       .single();
-    if (reminderError) throw reminderError;
+    if (reminderError) throw wrapReminderServiceError(reminderError);
 
     const {
       data: { user },
       error: userError,
     } = await supabase.auth.getUser();
-    if (userError) throw userError;
+    if (userError) throw wrapReminderServiceError(userError);
 
     const payload = {
       reminder_id: reminderId,
@@ -82,7 +204,7 @@ export const logReminderAction = async (reminderId, action, notes = '') => {
     };
 
     const { data, error } = await supabase.from('reminder_logs').insert(payload).select('*').single();
-    if (error) throw error;
+    if (error) throw wrapReminderServiceError(error);
 
     return handleServiceSuccess(data);
   } catch (error) {

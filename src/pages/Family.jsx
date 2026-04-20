@@ -12,8 +12,20 @@ import {
 	useUpdateMemberRole,
 } from '../hooks/useFamily';
 
+const getMemberId = (member) => member?.member_profile_id || member?.profile_id || member?.user_id || null;
+
+const getMemberName = (member) => {
+	const fullName = String(member?.profiles?.full_name || '').trim();
+	if (fullName) return fullName;
+
+	const memberId = getMemberId(member);
+	if (!memberId) return 'Family member';
+
+	return `Member (${memberId.slice(0, 6)})`;
+};
+
 const Family = () => {
-	const { familyId } = useAuthContext();
+	const { familyId, setActiveFamily } = useAuthContext();
 	const { data: family } = useFamily(familyId);
 	const { data: members = [] } = useFamilyMembers(familyId);
 	const createFamily = useCreateFamily();
@@ -38,7 +50,10 @@ const Family = () => {
 		}
 
 		try {
-			await createFamily.mutateAsync(name);
+			const createdFamily = await createFamily.mutateAsync(name);
+			if (createdFamily?.id) {
+				setActiveFamily(createdFamily.id);
+			}
 			setFamilyName('');
 		} catch (error) {
 			toast.error(error.message || 'Failed to create family');
@@ -53,7 +68,10 @@ const Family = () => {
 		}
 
 		try {
-			await joinFamily.mutateAsync(code);
+			const membership = await joinFamily.mutateAsync(code);
+			if (membership?.family_id) {
+				setActiveFamily(membership.family_id);
+			}
 			setInvite('');
 		} catch (error) {
 			toast.error(error.message || 'Failed to join family');
@@ -102,14 +120,24 @@ const Family = () => {
 				</div>
 			</article>
 
-			<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-				{members.map((member) => (
-					<article key={member.id} className="rounded-lg border bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-						<p className="font-medium">{member.profiles?.full_name}</p>
+			<article className="rounded-lg border bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+				<div className="mb-3 flex items-center justify-between">
+					<h3 className="font-semibold">Family Members</h3>
+					<span className="rounded-full bg-slate-100 px-2 py-1 text-xs dark:bg-slate-700">{members.length}</span>
+				</div>
+
+				{members.length === 0 ? (
+					<p className="text-sm text-slate-500">No members found yet. Share invite code to add family members.</p>
+				) : (
+					<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+						{members.map((member) => (
+							<article key={member.id} className="rounded-lg border bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+								<p className="font-medium">{getMemberName(member)}</p>
+								<p className="mt-1 text-xs text-slate-500">Role: {member.role || 'member'}</p>
 						<div className="mt-2 flex items-center gap-2">
 							<select
 								value={member.role}
-								onChange={(event) => updateMemberRole.mutate({ familyId, profileId: member.profile_id, role: event.target.value })}
+								onChange={(event) => updateMemberRole.mutate({ familyId, profileId: getMemberId(member), role: event.target.value })}
 								className="rounded border px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-900"
 							>
 								<option value="member">member</option>
@@ -118,15 +146,17 @@ const Family = () => {
 							</select>
 							<button
 								type="button"
-								onClick={() => removeMember.mutate({ familyId, profileId: member.profile_id })}
+								onClick={() => removeMember.mutate({ familyId, profileId: getMemberId(member) })}
 								className="rounded bg-danger-600 px-2 py-1 text-xs text-white"
 							>
 								Remove
 							</button>
 						</div>
-					</article>
-				))}
-			</div>
+							</article>
+						))}
+					</div>
+				)}
+			</article>
 		</section>
 	);
 };
